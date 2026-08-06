@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Custom Bypass VPN</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="logo-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <polyline points="9 12 11 14 15 10"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>Custom Bypass VPN</h1>
+          <span class="version">v1.0.0</span>
+        </div>
+      </div>
+      
+      <div class="header-actions">
+        <button class="lang-btn" id="langToggleBtn" title="Switch Language (English / فارسی)">EN</button>
+        <label class="toggle-switch" title="Toggle Extension Master Switch">
+          <input type="checkbox" id="masterToggle" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+    </header>
+
+    <!-- Main Active Tab Card -->
+    <main class="content">
+      <section class="card active-tab-card" id="tabCard">
+        <div class="card-header">
+          <span class="card-label" id="lblActiveTab">Active Tab Domain:</span>
+          <span class="badge" id="tabStatusBadge">Loading...</span>
+        </div>
+
+        <div class="domain-info">
+          <div class="globe-icon">🌐</div>
+          <div class="domain-name" id="currentDomain">Reading address...</div>
+        </div>
+
+        <button class="btn btn-primary" id="toggleTabBtn" disabled>
+          <span class="btn-icon">⚡</span>
+          <span id="btnText">Loading...</span>
+        </button>
+      </section>
+
+      <!-- Regional TLD Auto-Bypass Toggles -->
+      <section class="quick-settings">
+        <div class="section-title-sm" id="lblRegionalTitle">Regional Auto-Bypass (TLDs):</div>
+
+        <!-- Iran (.IR) -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-title" id="lblAutoIrTitle">🇮🇷 Bypass .IR (Iran)</span>
+          </div>
+          <label class="toggle-switch small">
+            <input type="checkbox" id="autoIrToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <!-- Russia (.RU) -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-title" id="lblAutoRuTitle">🇷🇺 Bypass .RU / .рф (Russia)</span>
+          </div>
+          <label class="toggle-switch small">
+            <input type="checkbox" id="autoRuToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <!-- China (.CN) -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-title" id="lblAutoCnTitle">🇨🇳 Bypass .CN (China)</span>
+          </div>
+          <label class="toggle-switch small">
+            <input type="checkbox" id="autoCnToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <!-- Turkey (.TR) -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-title" id="lblAutoTrTitle">🇹🇷 Bypass .TR (Turkey)</span>
+          </div>
+          <label class="toggle-switch small">
+            <input type="checkbox" id="autoTrToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <!-- Belarus (.BY) -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-title" id="lblAutoByTitle">🇧🇾 Bypass .BY (Belarus)</span>
+          </div>
+          <label class="toggle-switch small">
+            <input type="checkbox" id="autoByToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="stats-row">
+          <div class="stat-box">
+            <span class="stat-value" id="bypassedCount">0</span>
+            <span class="stat-label" id="lblBypassedCount">Custom Rules</span>
+          </div>
+          <div class="stat-box" id="helperHealthBox">
+            <span class="stat-value" id="helperHealthText">...</span>
+            <span class="stat-label" id="helperHealthLabel">Helper Service</span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer Actions -->
+    <footer class="app-footer">
+      <button class="btn-link" id="openOptionsBtn">
+        <span id="lblOpenOptions">⚙️ Advanced Settings & VPN Rules</span>
+      </button>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
