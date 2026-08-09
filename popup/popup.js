@@ -29,6 +29,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let currentHost = '';
   let isCurrentlyBypassed = false;
   let currentLang = 'en';
+  let isStartingProxy = false;
 
   const I18N = {
     en: {
@@ -42,15 +43,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       bypassedCount: "Custom Rules",
       openOptions: "⚙️ Advanced Settings & VPN Rules",
       badgeOff: "EXTENSION OFF",
-      badgeBypassed: "NO-VPN (BYPASSED)",
+      badgeBypassed: "DIRECT (NO VPN)",
       badgeVpn: "USING VPN",
       badgeDisabled: "NOT APPLICABLE",
       btnOff: "Extension Disabled",
-      btnEnableVpn: "⚡ Enable VPN For This Site",
-      btnDisableVpn: "⚡ Disable VPN For This Site",
+      btnEnableVpn: "🛡️ Route This Site Through VPN",
+      btnDisableVpn: "⚡ Bypass VPN For This Site",
       btnInvalidTab: "Internal Chrome Page",
       helperOnline: "Helper Service Online",
-      helperOffline: "Helper Offline (Click to install)",
+      helperOffline: "Click to start (Run install_autostart.bat)",
+      helperStarting: "Starting silent proxy...",
       statusOnline: "🟢 Active",
       statusOffline: "🔴 Offline"
     },
@@ -65,15 +67,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       bypassedCount: "قوانین سفارشی",
       openOptions: "⚙️ تنظیمات پیشرفته و لیست دامنه‌ها",
       badgeOff: "افزونه خاموش",
-      badgeBypassed: "اینترنت بدون VPN (بای‌پاس)",
-      badgeVpn: "اینترنت دارای VPN",
+      badgeBypassed: "مستقیم (بدون VPN)",
+      badgeVpn: "متصل به VPN",
       badgeDisabled: "غیرقابل تغییر",
       btnOff: "افزونه غیرفعال است",
-      btnEnableVpn: "⚡ فعال‌سازی مجدد VPN برای این سایت",
-      btnDisableVpn: "⚡ غیرفعال‌سازی VPN برای این سایت",
+      btnEnableVpn: "🛡️ اتصال مجدد این سایت به VPN",
+      btnDisableVpn: "⚡ بای‌پاس و عبور بدون VPN این سایت",
       btnInvalidTab: "صفحه داخلی کروم / بدون دامنه",
       helperOnline: "سرویس پس‌زمینه آنلاین است",
-      helperOffline: "روی install_autostart کلیک کنید",
+      helperOffline: "روی install_autostart.bat کلیک کنید",
+      helperStarting: "در حال راه‌اندازی پس‌زمینه...",
       statusOnline: "🟢 فعال",
       statusOffline: "🔴 خاموش"
     }
@@ -126,7 +129,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (autoByToggle) autoByToggle.checked = Boolean(settings.autoByBypass);
 
       bypassedCount.textContent = (settings.bypassDomains || []).length;
-      checkHelperHealth(settings.localProxyHost || '127.0.0.1', settings.localProxyPort || 8888);
+      checkHelperHealth(settings.localProxyHost || '127.0.0.1', settings.localProxyPort || 8888, settings.proxyMode);
 
       if (activeTab && activeTab.host) {
         currentHost = activeTab.host;
@@ -162,7 +165,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (bypassed) {
       tabStatusBadge.textContent = t.badgeBypassed;
       tabStatusBadge.className = 'badge bypassed';
-      toggleTabBtn.className = 'btn btn-danger';
+      toggleTabBtn.className = 'btn btn-secondary-vpn';
       btnText.textContent = t.btnEnableVpn;
     } else {
       tabStatusBadge.textContent = t.badgeVpn;
@@ -248,29 +251,110 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  async function checkHelperHealth(host, port) {
+  function triggerSilentProtocolLaunch() {
+    try {
+      let iframe = document.getElementById('helperLauncherFrame');
+      if (!iframe) {
+        iframe = document.createElement('iframe');
+        iframe.id = 'helperLauncherFrame';
+        iframe.style.display = 'none';
+        document.body.appendChild(iframe);
+      }
+      iframe.src = 'ag-antivpn://start';
+    } catch (e) {
+      console.error('Failed to launch silent protocol:', e);
+    }
+  }
+
+  async function checkHelperHealth(host, port, proxyMode) {
     const helperHealthText = document.getElementById('helperHealthText');
     const helperHealthLabel = document.getElementById('helperHealthLabel');
     const helperHealthBox = document.getElementById('helperHealthBox');
     const t = I18N[currentLang];
 
+    if (proxyMode === 'v2ray_sysproxy') {
+      if (helperHealthText) {
+        helperHealthText.textContent = t.statusOnline;
+        helperHealthText.style.color = '#10b981';
+      }
+      if (helperHealthLabel) {
+        helperHealthLabel.textContent = currentLang === 'fa' ? 'v2rayN System Proxy' : 'v2rayN SysProxy Mode';
+      }
+      return;
+    }
+
     if (helperHealthBox) {
       helperHealthBox.style.cursor = 'pointer';
-      helperHealthBox.onclick = () => {
-        if (chrome.runtime.openOptionsPage) {
-          chrome.runtime.openOptionsPage();
-        } else {
-          window.open(chrome.runtime.getURL('options/options.html'));
+      helperHealthBox.onclick = async () => {
+        const isCurrentlyOnline = helperHealthText.textContent.includes('🟢') || helperHealthText.textContent.includes('Active');
+        
+        if (isCurrentlyOnline) {
+          if (chrome.runtime.openOptionsPage) chrome.runtime.openOptionsPage();
+          else window.open(chrome.runtime.getURL('options/options.html'));
+          return;
         }
+
+        // Trigger Silent Protocol Launch
+        isStartingProxy = true;
+        helperHealthText.textContent = '⏳ ...';
+        helperHealthText.style.color = '#3b82f6';
+        helperHealthLabel.textContent = t.helperStarting;
+
+        triggerSilentProtocolLaunch();
+
+        let attempts = 0;
+        const intervalId = setInterval(async () => {
+          attempts++;
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 1200);
+
+            const res = await fetch(`http://${host}:${port}/ag-health-check`, {
+              method: 'GET',
+              cache: 'no-store',
+              signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+
+            if (res.ok || res.status === 200) {
+              clearInterval(intervalId);
+              isStartingProxy = false;
+              helperHealthText.textContent = t.statusOnline;
+              helperHealthText.style.color = '#10b981';
+              helperHealthLabel.textContent = t.helperOnline;
+              await chrome.storage.local.set({ helperOnlineStatus: true });
+              return;
+            }
+          } catch (e) {
+            // Retrying...
+          }
+
+          if (attempts >= 10) {
+            clearInterval(intervalId);
+            isStartingProxy = false;
+            helperHealthText.textContent = t.statusOffline;
+            helperHealthText.style.color = '#ef4444';
+            helperHealthLabel.textContent = t.helperOffline;
+            await chrome.storage.local.set({ helperOnlineStatus: false });
+
+            const msg = currentLang === 'fa'
+              ? "برای فعال‌سازی سرویس پس‌زمینه، فایل install_autostart.bat را یک‌بار در پوشه پروژه اجرا کنید."
+              : "To enable background proxy helper, run install_autostart.bat once in your project folder.";
+            alert(msg);
+          }
+        }, 300);
       };
     }
 
+    if (isStartingProxy) return;
+
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
 
       const res = await fetch(`http://${host}:${port}/ag-health-check`, {
         method: 'GET',
+        cache: 'no-store',
         signal: controller.signal
       });
       clearTimeout(timeoutId);
@@ -279,13 +363,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         helperHealthText.textContent = t.statusOnline;
         helperHealthText.style.color = '#10b981';
         helperHealthLabel.textContent = t.helperOnline;
+        await chrome.storage.local.set({ helperOnlineStatus: true });
       } else {
         throw new Error('Not ok');
       }
     } catch (e) {
-      helperHealthText.textContent = t.statusOffline;
-      helperHealthText.style.color = '#ef4444';
-      helperHealthLabel.textContent = t.helperOffline;
+      if (!isStartingProxy) {
+        helperHealthText.textContent = t.statusOffline;
+        helperHealthText.style.color = '#ef4444';
+        helperHealthLabel.textContent = t.helperOffline;
+        await chrome.storage.local.set({ helperOnlineStatus: false });
+      }
     }
   }
 

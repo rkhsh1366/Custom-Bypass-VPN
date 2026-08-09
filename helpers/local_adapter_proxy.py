@@ -95,12 +95,15 @@ def handle_client(client_socket, client_addr):
         url = parts[1]
 
         # Health check endpoint for Chrome extension status check
-        if '/ag-health-check' in url:
+        if '/ag-health-check' in url or method == 'OPTIONS':
             response_body = b'{"status":"ok","ip":"' + PHYSICAL_LAN_IP.encode('utf-8') + b'"}'
             response = (
                 b"HTTP/1.1 200 OK\r\n"
                 b"Content-Type: application/json\r\n"
                 b"Access-Control-Allow-Origin: *\r\n"
+                b"Access-Control-Allow-Methods: GET, POST, OPTIONS, CONNECT\r\n"
+                b"Access-Control-Allow-Headers: *\r\n"
+                b"Access-Control-Allow-Private-Network: true\r\n"
                 b"Connection: close\r\n"
                 b"Content-Length: " + str(len(response_body)).encode('utf-8') + b"\r\n"
                 b"\r\n" + response_body

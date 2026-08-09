@@ -1,4 +1,4 @@
-// Service Worker for AG AntiVPN Selective Router (Manifest V3)
+// Service Worker for Custom Bypass VPN (Manifest V3)
 
 // Default Storage Setup
 const DEFAULT_SETTINGS = {
@@ -101,23 +101,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
-        const settings = await chrome.storage.local.get(['bypassDomains']);
-        let domains = settings.bypassDomains || [];
+        const settings = await chrome.storage.local.get(DEFAULT_SETTINGS);
+        let bypassDomains = settings.bypassDomains || [];
+        let forceVpnDomains = settings.forceVpnDomains || [];
         const cleanHost = host.toLowerCase().replace(/^www\./, '');
 
-        const index = domains.findIndex(d => d.toLowerCase() === cleanHost);
-        let nowBypassed = false;
+        const currentlyBypassed = isHostBypassed(cleanHost, settings);
+        let nowBypassed = !currentlyBypassed;
 
-        if (index >= 0) {
-          domains.splice(index, 1);
+        if (currentlyBypassed) {
+          // User wants to UN-BYPASS (Route through VPN)
+          bypassDomains = bypassDomains.filter(d => {
+            const cd = d.toLowerCase().trim().replace(/^www\./, '');
+            return cd !== cleanHost && !cleanHost.endsWith('.' + cd);
+          });
+          forceVpnDomains = forceVpnDomains.filter(d => d.toLowerCase().trim() !== cleanHost);
+
+          const tempSettings = { ...settings, bypassDomains, forceVpnDomains };
+          if (isHostBypassed(cleanHost, tempSettings)) {
+            forceVpnDomains.push(cleanHost);
+          }
           nowBypassed = false;
         } else {
-          domains.push(cleanHost);
+          // User wants to BYPASS (No VPN)
+          forceVpnDomains = forceVpnDomains.filter(d => {
+            const cd = d.toLowerCase().trim().replace(/^www\./, '');
+            return cd !== cleanHost && !cleanHost.endsWith('.' + cd);
+          });
+          if (!bypassDomains.some(d => d.toLowerCase().trim() === cleanHost)) {
+            bypassDomains.push(cleanHost);
+          }
           nowBypassed = true;
         }
 
-        await chrome.storage.local.set({ bypassDomains: domains });
-        sendResponse({ success: true, isBypassed: nowBypassed, domains });
+        await chrome.storage.local.set({ bypassDomains, forceVpnDomains });
+        await applyProxyConfig();
+        await updateActiveTabBadge();
+
+        sendResponse({ success: true, isBypassed: nowBypassed, domains: bypassDomains });
       } else if (message.type === 'TOGGLE_MASTER_ENABLE') {
         const { enabled } = message;
         await chrome.storage.local.set({ enabled });
@@ -139,22 +160,32 @@ function isHostBypassed(host, settings) {
 
   const cleanHost = host.toLowerCase().replace(/^www\./, '');
 
-  // Check regional auto bypasses
+  // 1. Check Force VPN Domains first
+  const forceList = settings.forceVpnDomains || [];
+  for (const pattern of forceList) {
+    const cleanPattern = pattern.toLowerCase().trim().replace(/^www\./, '');
+    if (cleanPattern.startsWith('*.')) {
+      const suffix = cleanPattern.slice(2);
+      if (cleanHost.endsWith('.' + suffix) || cleanHost === suffix) return false;
+    } else if (cleanHost === cleanPattern || cleanHost.endsWith('.' + cleanPattern)) {
+      return false;
+    }
+  }
+
+  // 2. Check Regional TLD Bypasses
   if (settings.autoIrBypass && (cleanHost.endsWith('.ir') || cleanHost === 'ir')) return true;
   if (settings.autoRuBypass && (cleanHost.endsWith('.ru') || cleanHost.endsWith('.su') || cleanHost.endsWith('.xn--p1ai') || cleanHost === 'ru')) return true;
   if (settings.autoCnBypass && (cleanHost.endsWith('.cn') || cleanHost === 'cn')) return true;
   if (settings.autoTrBypass && (cleanHost.endsWith('.tr') || cleanHost === 'tr')) return true;
   if (settings.autoByBypass && (cleanHost.endsWith('.by') || cleanHost === 'by')) return true;
 
-  // Check explicit bypass list
+  // 3. Check Explicit Bypass Domains List
   const bypassList = settings.bypassDomains || [];
   for (const pattern of bypassList) {
     const cleanPattern = pattern.toLowerCase().trim().replace(/^www\./, '');
     if (cleanPattern.startsWith('*.')) {
       const suffix = cleanPattern.slice(2);
-      if (cleanHost.endsWith('.' + suffix) || cleanHost === suffix) {
-        return true;
-      }
+      if (cleanHost.endsWith('.' + suffix) || cleanHost === suffix) return true;
     } else if (cleanHost === cleanPattern || cleanHost.endsWith('.' + cleanPattern)) {
       return true;
     }
@@ -185,8 +216,8 @@ function generatePacScript(settings) {
     return `
       function FindProxyForURL(url, host) {
         if (!host) return "DIRECT";
-        
         var cleanHost = host.toLowerCase().replace(/^www\\./, "");
+        if (cleanHost === "127.0.0.1" || cleanHost === "localhost") return "DIRECT";
         var bypassList = ${bypassDomainsJson};
         var forceVpnList = ${forceVpnJson};
         var vpnProxy = ${JSON.stringify(vpnProxyTarget)};
@@ -234,8 +265,8 @@ function generatePacScript(settings) {
   return `
     function FindProxyForURL(url, host) {
       if (!host) return "DIRECT";
-      
       var cleanHost = host.toLowerCase().replace(/^www\\./, "");
+      if (cleanHost === "127.0.0.1" || cleanHost === "localhost") return "DIRECT";
       var bypassList = ${bypassDomainsJson};
       var forceVpnList = ${forceVpnJson};
       var proxyString = ${JSON.stringify(proxyTarget)};
@@ -297,9 +328,9 @@ async function applyProxyConfig() {
 
   try {
     await chrome.proxy.settings.set({ value: config, scope: 'regular' });
-    console.log('AG AntiVPN: Proxy PAC successfully updated.');
+    console.log('Custom Bypass VPN: Proxy PAC successfully updated.');
   } catch (err) {
-    console.error('AG AntiVPN: Failed to set proxy settings:', err);
+    console.error('Custom Bypass VPN: Failed to set proxy settings:', err);
   }
 }
 
