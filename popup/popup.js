@@ -1,4 +1,4 @@
-document.addEventListener('DOMContentLoaded', async () => {
+document.addEventListener('DOMContentLoaded', () => {
   const masterToggle = document.getElementById('masterToggle');
   const tabStatusBadge = document.getElementById('tabStatusBadge');
   const currentDomain = document.getElementById('currentDomain');
@@ -30,6 +30,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let isCurrentlyBypassed = false;
   let currentLang = 'en';
   let isStartingProxy = false;
+  let cachedSettings = {};
 
   const I18N = {
     en: {
@@ -82,11 +83,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   };
 
-  async function applyLanguage(lang) {
+  function applyLanguage(lang) {
     currentLang = lang;
     document.documentElement.lang = lang;
     document.documentElement.dir = lang === 'fa' ? 'rtl' : 'ltr';
-    langToggleBtn.textContent = lang === 'fa' ? 'FA' : 'EN';
+    if (langToggleBtn) langToggleBtn.textContent = lang === 'fa' ? 'FA' : 'EN';
 
     const t = I18N[lang];
     if (lblActiveTab) lblActiveTab.textContent = t.activeTab;
@@ -100,55 +101,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (lblBypassedCount) lblBypassedCount.textContent = t.bypassedCount;
     if (lblOpenOptions) lblOpenOptions.textContent = t.openOptions;
 
-    const settings = await chrome.storage.local.get(['enabled']);
-    updateTabUi(isCurrentlyBypassed, settings.enabled !== false);
-  }
-
-  langToggleBtn.addEventListener('click', async () => {
-    const newLang = currentLang === 'en' ? 'fa' : 'en';
-    await chrome.storage.local.set({ appLang: newLang });
-    await applyLanguage(newLang);
-  });
-
-  // Fetch Current App State from Service Worker
-  async function loadState() {
-    try {
-      const response = await chrome.runtime.sendMessage({ type: 'GET_STATUS' });
-      if (!response || !response.success) return;
-
-      const { settings, activeTab } = response;
-      currentLang = settings.appLang || 'en';
-      await applyLanguage(currentLang);
-
-      masterToggle.checked = settings.enabled;
-
-      if (autoIrToggle) autoIrToggle.checked = settings.autoIrBypass !== false;
-      if (autoRuToggle) autoRuToggle.checked = Boolean(settings.autoRuBypass);
-      if (autoCnToggle) autoCnToggle.checked = Boolean(settings.autoCnBypass);
-      if (autoTrToggle) autoTrToggle.checked = Boolean(settings.autoTrBypass);
-      if (autoByToggle) autoByToggle.checked = Boolean(settings.autoByBypass);
-
-      bypassedCount.textContent = (settings.bypassDomains || []).length;
-      checkHelperHealth(settings.localProxyHost || '127.0.0.1', settings.localProxyPort || 8888, settings.proxyMode);
-
-      if (activeTab && activeTab.host) {
-        currentHost = activeTab.host;
-        currentDomain.textContent = currentHost;
-        isCurrentlyBypassed = activeTab.isBypassed;
-        toggleTabBtn.disabled = !settings.enabled;
-
-        updateTabUi(isCurrentlyBypassed, settings.enabled);
-      } else {
-        const t = I18N[currentLang];
-        currentDomain.textContent = t.btnInvalidTab;
-        tabStatusBadge.textContent = t.badgeDisabled;
-        tabStatusBadge.className = 'badge disabled';
-        toggleTabBtn.disabled = true;
-        btnText.textContent = t.btnInvalidTab;
-      }
-    } catch (err) {
-      console.error('Error fetching state:', err);
-    }
+    updateTabUi(isCurrentlyBypassed, cachedSettings.enabled !== false);
   }
 
   function updateTabUi(bypassed, enabled) {
@@ -175,81 +128,139 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  toggleTabBtn.addEventListener('click', async () => {
-    if (!currentHost) return;
+  // Fast Instant Initialization from Local Storage
+  chrome.storage.local.get(null, (settings) => {
+    cachedSettings = settings || {};
+    currentLang = cachedSettings.appLang || 'en';
+    applyLanguage(currentLang);
 
-    toggleTabBtn.disabled = true;
-    try {
-      const res = await chrome.runtime.sendMessage({
-        type: 'TOGGLE_TAB_BYPASS',
-        host: currentHost
-      });
+    if (masterToggle) masterToggle.checked = cachedSettings.enabled !== false;
+    if (autoIrToggle) autoIrToggle.checked = cachedSettings.autoIrBypass !== false;
+    if (autoRuToggle) autoRuToggle.checked = Boolean(cachedSettings.autoRuBypass);
+    if (autoCnToggle) autoCnToggle.checked = Boolean(cachedSettings.autoCnBypass);
+    if (autoTrToggle) autoTrToggle.checked = Boolean(cachedSettings.autoTrBypass);
+    if (autoByToggle) autoByToggle.checked = Boolean(cachedSettings.autoByBypass);
 
-      if (res && res.success) {
-        isCurrentlyBypassed = res.isBypassed;
-        bypassedCount.textContent = (res.domains || []).length;
-        const settings = await chrome.storage.local.get(['enabled']);
-        updateTabUi(isCurrentlyBypassed, settings.enabled !== false);
+    if (bypassedCount) bypassedCount.textContent = (cachedSettings.bypassDomains || []).length;
+
+    // Fetch active tab asynchronously
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const activeTab = tabs && tabs[0];
+      if (activeTab && activeTab.url) {
+        try {
+          const urlObj = new URL(activeTab.url);
+          if (urlObj.protocol.startsWith('http')) {
+            currentHost = urlObj.hostname.toLowerCase();
+            if (currentDomain) currentDomain.textContent = currentHost;
+
+            // Check if host is bypassed
+            chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (res) => {
+              if (res && res.success && res.activeTab) {
+                isCurrentlyBypassed = res.activeTab.isBypassed;
+                if (toggleTabBtn) toggleTabBtn.disabled = !(cachedSettings.enabled !== false);
+                updateTabUi(isCurrentlyBypassed, cachedSettings.enabled !== false);
+              }
+            });
+          } else {
+            setInvalidTabUi();
+          }
+        } catch (e) {
+          setInvalidTabUi();
+        }
+      } else {
+        setInvalidTabUi();
       }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      toggleTabBtn.disabled = false;
-    }
+    });
+
+    // Run health check detached in background without blocking UI
+    setTimeout(() => {
+      checkHelperHealth(cachedSettings.localProxyHost || '127.0.0.1', cachedSettings.localProxyPort || 8888, cachedSettings.proxyMode);
+    }, 50);
   });
 
-  masterToggle.addEventListener('change', async () => {
-    const enabled = masterToggle.checked;
-    await chrome.runtime.sendMessage({
-      type: 'TOGGLE_MASTER_ENABLE',
-      enabled
+  function setInvalidTabUi() {
+    const t = I18N[currentLang];
+    if (currentDomain) currentDomain.textContent = t.btnInvalidTab;
+    if (tabStatusBadge) {
+      tabStatusBadge.textContent = t.badgeDisabled;
+      tabStatusBadge.className = 'badge disabled';
+    }
+    if (toggleTabBtn) toggleTabBtn.disabled = true;
+    if (btnText) btnText.textContent = t.btnInvalidTab;
+  }
+
+  if (langToggleBtn) {
+    langToggleBtn.addEventListener('click', async () => {
+      const newLang = currentLang === 'en' ? 'fa' : 'en';
+      await chrome.storage.local.set({ appLang: newLang });
+      cachedSettings.appLang = newLang;
+      applyLanguage(newLang);
     });
-    await loadState();
-  });
+  }
+
+  if (toggleTabBtn) {
+    toggleTabBtn.addEventListener('click', async () => {
+      if (!currentHost) return;
+
+      toggleTabBtn.disabled = true;
+      try {
+        const res = await chrome.runtime.sendMessage({
+          type: 'TOGGLE_TAB_BYPASS',
+          host: currentHost
+        });
+
+        if (res && res.success) {
+          isCurrentlyBypassed = res.isBypassed;
+          if (bypassedCount) bypassedCount.textContent = (res.domains || []).length;
+          updateTabUi(isCurrentlyBypassed, cachedSettings.enabled !== false);
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        toggleTabBtn.disabled = false;
+      }
+    });
+  }
+
+  if (masterToggle) {
+    masterToggle.addEventListener('change', async () => {
+      const enabled = masterToggle.checked;
+      cachedSettings.enabled = enabled;
+      await chrome.runtime.sendMessage({
+        type: 'TOGGLE_MASTER_ENABLE',
+        enabled
+      });
+      updateTabUi(isCurrentlyBypassed, enabled);
+    });
+  }
 
   // Country TLD Auto-Bypass Listeners
-  if (autoIrToggle) {
-    autoIrToggle.addEventListener('change', async () => {
-      await chrome.storage.local.set({ autoIrBypass: autoIrToggle.checked });
-      await loadState();
-    });
-  }
+  const tlds = [
+    { el: autoIrToggle, key: 'autoIrBypass' },
+    { el: autoRuToggle, key: 'autoRuBypass' },
+    { el: autoCnToggle, key: 'autoCnBypass' },
+    { el: autoTrToggle, key: 'autoTrBypass' },
+    { el: autoByToggle, key: 'autoByBypass' }
+  ];
 
-  if (autoRuToggle) {
-    autoRuToggle.addEventListener('change', async () => {
-      await chrome.storage.local.set({ autoRuBypass: autoRuToggle.checked });
-      await loadState();
-    });
-  }
-
-  if (autoCnToggle) {
-    autoCnToggle.addEventListener('change', async () => {
-      await chrome.storage.local.set({ autoCnBypass: autoCnToggle.checked });
-      await loadState();
-    });
-  }
-
-  if (autoTrToggle) {
-    autoTrToggle.addEventListener('change', async () => {
-      await chrome.storage.local.set({ autoTrBypass: autoTrToggle.checked });
-      await loadState();
-    });
-  }
-
-  if (autoByToggle) {
-    autoByToggle.addEventListener('change', async () => {
-      await chrome.storage.local.set({ autoByBypass: autoByToggle.checked });
-      await loadState();
-    });
-  }
-
-  openOptionsBtn.addEventListener('click', () => {
-    if (chrome.runtime.openOptionsPage) {
-      chrome.runtime.openOptionsPage();
-    } else {
-      window.open(chrome.runtime.getURL('options/options.html'));
+  tlds.forEach(({ el, key }) => {
+    if (el) {
+      el.addEventListener('change', async () => {
+        cachedSettings[key] = el.checked;
+        await chrome.storage.local.set({ [key]: el.checked });
+      });
     }
   });
+
+  if (openOptionsBtn) {
+    openOptionsBtn.addEventListener('click', () => {
+      if (chrome.runtime.openOptionsPage) {
+        chrome.runtime.openOptionsPage();
+      } else {
+        window.open(chrome.runtime.getURL('options/options.html'));
+      }
+    });
+  }
 
   function triggerSilentProtocolLaunch() {
     try {
@@ -307,7 +318,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           attempts++;
           try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 1200);
+            const timeoutId = setTimeout(() => controller.abort(), 1000);
 
             const res = await fetch(`http://${host}:${port}/ag-health-check`, {
               method: 'GET',
@@ -322,7 +333,6 @@ document.addEventListener('DOMContentLoaded', async () => {
               helperHealthText.textContent = t.statusOnline;
               helperHealthText.style.color = '#10b981';
               helperHealthLabel.textContent = t.helperOnline;
-              await chrome.storage.local.set({ helperOnlineStatus: true });
               return;
             }
           } catch (e) {
@@ -335,7 +345,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             helperHealthText.textContent = t.statusOffline;
             helperHealthText.style.color = '#ef4444';
             helperHealthLabel.textContent = t.helperOffline;
-            await chrome.storage.local.set({ helperOnlineStatus: false });
 
             const msg = currentLang === 'fa'
               ? "برای فعال‌سازی سرویس پس‌زمینه، فایل install_autostart.bat را یک‌بار در پوشه پروژه اجرا کنید."
@@ -350,7 +359,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const timeoutId = setTimeout(() => controller.abort(), 1200);
 
       const res = await fetch(`http://${host}:${port}/ag-health-check`, {
         method: 'GET',
@@ -360,22 +369,26 @@ document.addEventListener('DOMContentLoaded', async () => {
       clearTimeout(timeoutId);
 
       if (res.ok || res.status === 200) {
-        helperHealthText.textContent = t.statusOnline;
-        helperHealthText.style.color = '#10b981';
-        helperHealthLabel.textContent = t.helperOnline;
-        await chrome.storage.local.set({ helperOnlineStatus: true });
+        if (helperHealthText) {
+          helperHealthText.textContent = t.statusOnline;
+          helperHealthText.style.color = '#10b981';
+        }
+        if (helperHealthLabel) {
+          helperHealthLabel.textContent = t.helperOnline;
+        }
       } else {
         throw new Error('Not ok');
       }
     } catch (e) {
       if (!isStartingProxy) {
-        helperHealthText.textContent = t.statusOffline;
-        helperHealthText.style.color = '#ef4444';
-        helperHealthLabel.textContent = t.helperOffline;
-        await chrome.storage.local.set({ helperOnlineStatus: false });
+        if (helperHealthText) {
+          helperHealthText.textContent = t.statusOffline;
+          helperHealthText.style.color = '#ef4444';
+        }
+        if (helperHealthLabel) {
+          helperHealthLabel.textContent = t.helperOffline;
+        }
       }
     }
   }
-
-  await loadState();
 });
