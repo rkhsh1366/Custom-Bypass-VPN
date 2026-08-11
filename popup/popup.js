@@ -128,7 +128,56 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Fast Instant Initialization from Local Storage
+  function checkHostBypassed(host, settings) {
+    if (!settings || settings.enabled === false || !host) return false;
+    const cleanHost = host.toLowerCase().replace(/^www\./, '');
+
+    // 1. Force VPN list check
+    const forceList = settings.forceVpnDomains || [];
+    for (const pattern of forceList) {
+      const cleanPattern = pattern.toLowerCase().trim().replace(/^www\./, '');
+      if (cleanPattern.startsWith('*.')) {
+        const suffix = cleanPattern.slice(2);
+        if (cleanHost.endsWith('.' + suffix) || cleanHost === suffix) return false;
+      } else if (cleanHost === cleanPattern || cleanHost.endsWith('.' + cleanPattern)) {
+        return false;
+      }
+    }
+
+    // 2. Regional TLD checks
+    if (settings.autoIrBypass !== false && (cleanHost.endsWith('.ir') || cleanHost === 'ir')) return true;
+    if (settings.autoRuBypass && (cleanHost.endsWith('.ru') || cleanHost.endsWith('.su') || cleanHost.endsWith('.xn--p1ai') || cleanHost === 'ru')) return true;
+    if (settings.autoCnBypass && (cleanHost.endsWith('.cn') || cleanHost === 'cn')) return true;
+    if (settings.autoTrBypass && (cleanHost.endsWith('.tr') || cleanHost === 'tr')) return true;
+    if (settings.autoByBypass && (cleanHost.endsWith('.by') || cleanHost === 'by')) return true;
+
+    // 3. Explicit bypass list checks
+    const bypassList = settings.bypassDomains || [];
+    for (const pattern of bypassList) {
+      const cleanPattern = pattern.toLowerCase().trim().replace(/^www\./, '');
+      if (cleanPattern.startsWith('*.')) {
+        const suffix = cleanPattern.slice(2);
+        if (cleanHost.endsWith('.' + suffix) || cleanHost === suffix) return true;
+      } else if (cleanHost === cleanPattern || cleanHost.endsWith('.' + cleanPattern)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function setInvalidTabUi() {
+    const t = I18N[currentLang];
+    if (currentDomain) currentDomain.textContent = t.btnInvalidTab;
+    if (tabStatusBadge) {
+      tabStatusBadge.textContent = t.badgeDisabled;
+      tabStatusBadge.className = 'badge disabled';
+    }
+    if (toggleTabBtn) toggleTabBtn.disabled = true;
+    if (btnText) btnText.textContent = t.btnInvalidTab;
+  }
+
+  // Zero-Latency Instant Render from Storage & Direct Tab Query
   chrome.storage.local.get(null, (settings) => {
     cachedSettings = settings || {};
     currentLang = cachedSettings.appLang || 'en';
@@ -143,7 +192,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (bypassedCount) bypassedCount.textContent = (cachedSettings.bypassDomains || []).length;
 
-    // Fetch active tab asynchronously
+    // Direct local query of active tab without waking up background service worker
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const activeTab = tabs && tabs[0];
       if (activeTab && activeTab.url) {
@@ -153,14 +202,9 @@ document.addEventListener('DOMContentLoaded', () => {
             currentHost = urlObj.hostname.toLowerCase();
             if (currentDomain) currentDomain.textContent = currentHost;
 
-            // Check if host is bypassed
-            chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (res) => {
-              if (res && res.success && res.activeTab) {
-                isCurrentlyBypassed = res.activeTab.isBypassed;
-                if (toggleTabBtn) toggleTabBtn.disabled = !(cachedSettings.enabled !== false);
-                updateTabUi(isCurrentlyBypassed, cachedSettings.enabled !== false);
-              }
-            });
+            isCurrentlyBypassed = checkHostBypassed(currentHost, cachedSettings);
+            if (toggleTabBtn) toggleTabBtn.disabled = !(cachedSettings.enabled !== false);
+            updateTabUi(isCurrentlyBypassed, cachedSettings.enabled !== false);
           } else {
             setInvalidTabUi();
           }
@@ -172,22 +216,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    // Run health check detached in background without blocking UI
+    // Run health check in background asynchronously after popup is already open
     setTimeout(() => {
       checkHelperHealth(cachedSettings.localProxyHost || '127.0.0.1', cachedSettings.localProxyPort || 8888, cachedSettings.proxyMode);
-    }, 50);
+    }, 20);
   });
-
-  function setInvalidTabUi() {
-    const t = I18N[currentLang];
-    if (currentDomain) currentDomain.textContent = t.btnInvalidTab;
-    if (tabStatusBadge) {
-      tabStatusBadge.textContent = t.badgeDisabled;
-      tabStatusBadge.className = 'badge disabled';
-    }
-    if (toggleTabBtn) toggleTabBtn.disabled = true;
-    if (btnText) btnText.textContent = t.btnInvalidTab;
-  }
 
   if (langToggleBtn) {
     langToggleBtn.addEventListener('click', async () => {
